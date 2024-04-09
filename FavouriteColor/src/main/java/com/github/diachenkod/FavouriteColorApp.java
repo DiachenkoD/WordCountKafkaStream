@@ -4,23 +4,23 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KafkaStreams;
+import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
-import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.kstream.KTable;
-import org.apache.kafka.streams.kstream.Materialized;
-import org.apache.kafka.streams.kstream.Produced;
+import org.apache.kafka.streams.kstream.*;
 import org.apache.log4j.BasicConfigurator;
 
-import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 
-public class StreamsStarterApp {
+public class FavouriteColorApp {
+
+    private static final List<String> availableColors = List.of("red", "blue", "green");
 
     public static void main(String[] args) {
         BasicConfigurator.configure();
         final Properties properties = new Properties();
-        properties.put(StreamsConfig.APPLICATION_ID_CONFIG, "word-count");
+        properties.put(StreamsConfig.APPLICATION_ID_CONFIG, "favourite-color");
         try (Serde<String> string = Serdes.String()) {
             properties.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, string.getClass());
             properties.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, string.getClass());
@@ -30,24 +30,22 @@ public class StreamsStarterApp {
 
         final StreamsBuilder builder = new StreamsBuilder();
 
-        // 1 - stream from Kafka
-        final KStream<String, String> lineStream = builder.stream("word-count-input");
+        final KStream<String, String> lineStream = builder.stream("favourite-color-input");
 
-        final KTable<String, Long> countedTable = lineStream
-                // 2 - map values to lowercase
+        final KTable<String, String> nameToColor = lineStream
                 .mapValues(value -> value.toLowerCase())
-                // 3 - flatmap values split by space
-                .flatMapValues(value -> Arrays.asList(value.split(" ")))
-                // 4 - select key to apply a key (we discard the old key)
-                .selectKey((ignoredKey, value) -> value)
-                // 5 - group by key before aggregation
-                .groupByKey()
-                // 6 - count occurrences
-                .count(Materialized.as("Counts"));
+                .filter((key, value) -> {
+                    final String[] personColor = value.split(",");
+                    return personColor.length == 2 && availableColors.contains(personColor[1]);
+                })
+                .selectKey((ignoredKey, value) -> value.split(",")[0])
+                .mapValues(value -> value.split(",")[1])
+                .toTable();
 
-        // 7 - to in order to write the results back to kafka
-        countedTable.toStream().to("word-count-output", Produced.with(Serdes.String(), Serdes.Long()));
-
+        nameToColor
+                .groupBy((name, color) -> KeyValue.pair(color, color), Grouped.with(Serdes.String(), Serdes.String()))
+                .count()
+                .toStream().to("favourite-color-output", Produced.with(Serdes.String(), Serdes.Long()));
         try (KafkaStreams kafkaStreams = new KafkaStreams(builder.build(), properties)) {
             kafkaStreams.start();
             //TIP Just for the testing purposes
@@ -61,6 +59,4 @@ public class StreamsStarterApp {
             }
         }
     }
-
-
 }
